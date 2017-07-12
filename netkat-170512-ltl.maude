@@ -1,0 +1,592 @@
+fmod FIELD is
+    sorts FieldId Field .
+    protecting INT .
+    ops src typ dst vlan ip-src ip-dst tcp-src tcp-dst upd-src upd-dst sw pt : -> FieldId .
+    op `(_:_`) : FieldId Int -> Field [ctor] .       --- a record
+    vars I1 I2 : FieldId .
+    vars N1 N2 : Int .
+
+    
+    op getId : Field -> FieldId .
+    op getVal : Field -> Int .
+    eq getId((I1 : N1)) = I1 .
+    eq getVal((I1 : N1)) = N1 .
+
+    op _=_ : Field Field -> Bool [comm] .
+    ceq ((I1 : N1) = (I2 : N2)) = true if I1 = I2 /\ N1 = N2 .
+endfm
+
+ 
+fmod PACKET is
+    protecting FIELD .
+    protecting INT .
+    sort Packet .
+    subsort Field < Packet .
+
+    op nil : -> Packet [ctor] .
+    op __ : Packet Packet -> Packet [assoc ctor id: nil] . --- we assume packet is a list of records
+
+    *** This function should be partial 
+    op _(_) : Packet FieldId -> Int .                 --- returns the value of a field in the packet 
+    op _(_,_) : Packet FieldId Int -> Packet .        --- update the value of a field in the packet 
+
+
+    vars F F' : FieldId .
+    vars I I' : Int .
+    vars P P1 P2 : Packet .
+    
+    --- this function should be partial
+    eq ((F : I) P)(F') = if F == F' then I else P(F') fi .
+    
+    eq ((F : I) P)(F',I') = if F == F' then ((F : I') (P(F',I'))) else (F : I) (P(F',I')) fi .
+    eq (F : I)(F',I') = if F == F' then (F : I') else (F : I) fi .
+    eq nil(F',I') = nil .
+
+    op _=_ : Packet Packet -> Bool [comm] .
+    ceq ((F : I) P1) = ((F' : I') P2) = (P1 = P2) if F' = F /\ I = I' .
+    
+endfm
+
+view PACKET-VIEW from TRIV to PACKET is
+    sort Elt to Packet .
+endv
+    
+
+fmod PREDICATE is
+    protecting FIELD .
+    protecting INT .
+    sort Predicate .
+    --- l mean 1 and identy and drop here  
+    ops l o : -> Predicate [ctor metadata "identity-drop"] .
+    op _=_ : FieldId Int -> Predicate [ctor metadata "test" ] .
+    --- For + we have associativity and commutativity because the union operator for policy (to be defined later) has. 
+    op _+_ : Predicate Predicate -> Predicate [ctor assoc comm metadata "disjunction" prec 45 gather (E e)] .
+    
+    op _@_ : Predicate Predicate -> Predicate [ctor assoc comm prec 40 gather (E e) id: l ] .
+    op ~_ : Predicate -> Predicate [ctor metadata "negation" prec 43] .
+
+    vars X Y Z : Predicate .
+    ***(
+    --- These laws are not useful to normalization 
+    --- Additional Boolean Algebra Axioms
+    --- completed 
+    --- ceq X + (Y @ Z) = (X + Y) @ (X + Z) if Y =/= l /\ Z =/= l .
+    eq X + l = l .
+    eq X + (~ X) = l .
+    eq X @ Y = Y @ X [nonexec] . --- this may cause non-terminating, and so we use assoc attribute instead   
+    eq X @ (~ X) = o .
+    eq X @ X = X .
+
+    *** the condition is used to force termination of reduction 
+    ceq X @ (Y + Z) = (X @ Y) + (X @ Z) if X =/= l .
+    ceq (X + Y) @ Z = (X @ Z) + (Y @ Z) if Z =/= l .
+    
+    ceq o @ X = o if X =/= l .
+    ceq X @ o = o if X =/= l .
+
+    )
+endfm
+
+    
+fmod POLICY is
+    protecting PREDICATE .
+
+    sort Policy .
+    subsort Predicate < Policy . --- A single predicate is also a policy (I'm not sure here)
+
+    op _←_ : FieldId Int -> Policy [ctor metadata "Modification"] .
+    op _+_ : Policy Policy -> Policy [ctor assoc comm metadata "Union" prec 43 gather (E e)] .
+    --- I cannot use · for sequential composition because · has been used for predicates, which is commutative but here not.
+    --- · is conditionally commutative  
+    op _·_ : Policy Policy -> Policy [ctor assoc prec 41 gather (E e) id: l] .
+    op _* : Policy -> Policy [ctor metadata "Kleene star" prec 39 ] .
+    op dup : -> Policy [ctor metadata "Duplication"] .
+
+    --- the <= relation between Policy 
+    op _<=_ : Policy Policy -> Bool [prec 50] .
+    ceq P <= Q = true if P + Q = Q .
+    ceq P <= Q = false if P + Q =/= Q .
+
+    vars P Q R : Policy .
+    vars X Y Z : Predicate .
+      
+    --- Kleene Algebra Axioms
+
+    
+    eq P + o = P .
+    eq P + P = P .
+
+    --- use identy instead 
+    ***    eq l · P = P .
+    ***    eq P · l = P .
+
+    ***(
+    *** the condition is used to force termination of reduction
+    *** this is not used for normalization
+    
+    ceq P · (Q + R) = (P · Q) + (P · R) if P =/= l .
+    ceq (P + Q) · R = (P · R) + (Q · R) if R =/= l .
+    
+    ceq o · P = o if P =/= l .
+    ceq P · o = o if P =/= l .
+
+    eq l + (P · (P * )) = (P * ) .
+    eq l + ((P * ) · P) = (P * ) .
+
+    eq (Q + P · R) <= R = ((P * ) · Q) <= R .
+    eq (Q + R · P) <= R = (Q · (P * ) <= R) .
+
+    eq (Y + X @ Z) <= Z = ((X * ) @ Y) <= Z .
+    eq (Y + Z @ X) <= Z = (Y @ (X * ) <= Z) .
+    )
+    ---
+    *** ceq ((P **) @ Q) <= R = true if Q + P @ R <= R .
+    *** ceq (P @ (R **) <= Q) = true if P + Q @ R <= Q .
+
+    --- conditionally commutative, i.e., if P and Q are predicates, then · is reduced to @
+    
+    *** ceq P · Q = P @ Q if Q :: Predicate /\ P :: Predicate .
+    
+    --- Packet algebra axioms
+
+    vars F1 F2 : FieldId .
+    vars I1 I2 : Int .
+
+    ---
+    --- this equation is declared non-executable because it may cause non-terminating
+    ceq (F1 ← I1) · (F2 ← I2) =  (F2 ← I2) · (F1 ← I1) if F1 =/= F2 [nonexec] .
+
+    ceq (F1 ← I1) · (F2 = I2) = (F2 = I2) · (F1 ← I1) if F1 =/= F2 .
+    eq (F1 ← I1) · (F1 = I1) = (F1 ← I1) .
+    eq (F1 = I1) · (F1 ← I1) = (F1 = I1) .
+    eq (F1 ← I1) · (F1 ← I2) = (F1 ← I2) .
+    ceq (F1 = I1) · (F1 = I2) = o if I1 =/= I2 .
+
+      --- additional
+      --- this seems wrong 
+    --- eq (F1 = I1) · (F2 = I2) = (F1 = I1) · (F1 = I2) . 
+    --- ceq (F1 ← I1) · (F2 ← I2) = (F1 ← I1) · (F2 ← I2) if F1 =/= F2 . 
+      ---
+
+      --- extended axiom 
+      ceq (F1 = I1) · (F1 = I2) = o if I1 =/= I2 .
+    --- Sigma(i)(f=i) = 1 -- how to define? 
+   
+endfm 
+
+view SVIEW from TRIV to POLICY is
+    sort Elt to Policy .
+endv 
+
+mod NORMAL-FORM is
+    including POLICY .
+    including SET{SVIEW}*(sort Set{SVIEW} to PoliSet, sort NeSet{SVIEW} to NePoliSet).
+    *** every field has a range e.g., (f, n), where f is a field, and its value ranges from 0 to n.
+
+    sorts FieldRange FieldRangeSet .
+    subsort FieldRange < FieldRangeSet .
+    op ((_,_)) : FieldId Nat -> FieldRange .
+    op empty : -> FieldRangeSet .
+    op __ : FieldRangeSet FieldRangeSet -> FieldRangeSet [assoc comm id: empty] .
+    op com : FieldRangeSet -> PoliSet .
+    op comAux : FieldId Nat -> PoliSet .
+
+    sort Atom .
+    sort CAsign .
+
+    subsort Atom < Predicate .
+    subsort CAsign < Policy .
+    sort NormalFormItem NormalForm .
+    subsort NormalFormItem < NormalForm .
+    op _+_ : NormalForm NormalForm -> NormalForm [assoc comm id: o] .
+    op ((_;_)) : Predicate Policy -> NormalFormItem [format(n d d d d d)] .
+    op o : -> NormalFormItem .
+
+    var F : FieldId .
+    vars N N1 : Nat .
+    var FS : FieldRangeSet .
+    vars PS PS1 : PoliSet .
+    var A : Atom .
+    var P : Policy .
+    
+    eq com(empty) = empty .
+    eq com((F , N)) = comAux(F,N) .
+    ceq com(((F, N) FS)) = comAux(F,N) @ com(FS) if FS =/= empty .
+    ceq comAux(F,N) = (F = N), comAux(F, sd(N,1)) if N > 0 .
+    eq comAux(F, 0) = (F = 0) .
+    eq (F = N) @ empty = empty .
+    ceq (F = N) @ (PD, PS) = (F = N) @ PD, (F = N) @ PS if PS =/= empty .
+    ceq ((F = N), PS) @ PS1 = (F = N) @ PS1, (PS @ PS1) if PS =/= empty .
+    ceq (~ F = N) @ (PD, PS) = (~ F = N) @ PS
+      if PS =/= empty /\
+	  (F = N) @ PD1 := PD .
+    ceq (~ F = N) @ (PD, PS) = PD, (~ F = N) @ PS
+      if PS =/= empty /\
+	  (F = N1) @ PD1 := PD /\ N =/= N1 .
+    ceq (~ F = N) @ (PD, PS) = (~ F = N) @ PD, (~ F = N) @ PS if PS =/= empty [owise] .
+    ceq ((~ F = N), PS) @ PS1 = (~ F = N) @ PS1, (PS @ PS1) if PS =/= empty .
+    eq ( PD ; P ) + ( PD ; P ) = (PD ; P) .
+
+    ***(
+    eq comAux(F,0,empty) = (F = 0) .
+    ceq comAux(F,0,FS) = (F = 0) , com(FS) if FS =/= empty .
+    ceq comAux(F,N, empty) = ((F = N) , comAux(F,sd(N,1),empty)) if N > 0 .
+    ceq comAux(F,N, FS) = ((F = N) @ com(FS)) + comAux(F,sd(N,1),FS) if N > 0 /\ FS =/= empty .
+      )
+    
+    vars I I' : Nat .
+    
+    op rm : FieldRangeSet FieldId -> FieldRangeSet .
+    eq rm((F,I) FS, F) = FS .
+    eq rm(FS, F) = FS [owise] .
+
+    op normalizePred : Predicate -> NormalForm .
+    op normalizePoli : PoliSet Policy -> NormalForm .
+    op replace : Predicate Policy -> Policy .
+    
+    op atom2assign : Predicate -> Policy .
+    op assign2atom : Policy -> Predicate .
+    vars PD PD1 PD2 : Predicate .
+    vars PL PL1 PL2 PL3 : Policy .
+    var F1 : FieldId .
+    var I1 : Int .
+
+   --- cmb PD : Atom if isAtom(PD) .
+***    cmb PL : CAsign if isAssig(PL) .
+    
+    op isAtom : PoliSet -> Bool .
+    eq isAtom(l) = true .
+    eq isAtom(o) = true .
+    eq isAtom((F = I) @ PD) = isAtom(PD) .
+    eq isAtom((F = I)) = true .
+    ceq isAtom(PS) = false if not PS :: Predicate .
+    eq isAtom(PD) = false [owise] .
+
+    op isAssig : Policy -> Bool .
+    eq isAssig(l) = true .
+    eq isAssig(o) = true .
+    eq isAssig((F ← I) · PL) = isAssig(PL) .
+    eq isAssig((F ← I)) = true .
+    eq isAssig(PL) = false [owise] .
+
+    op nf2pol : NormalForm -> Policy .
+    ceq nf2pol((ATPD ; PL) + NF) = (ATPD · PL) + nf2pol(NF) if NF =/= o .
+    eq nf2pol((ATPD ; PL)) = (ATPD · PL) .
+    
+    ceq normalizePred((PD1, PS)) = (PD1 ; atom2assign(PD1)) + normalizePred(PS) if PS =/= empty .
+    eq normalizePred(PD1) = (PD1 ; atom2assign(PD1)) .
+    
+    ceq normalizePoli(PD, F ← I) = (PD ; replace(atom2assign(PD),F ← I)) if isAtom(PD) .
+    ceq normalizePoli((PD1, PS), F ← I) = normalizePoli(PD1, F ← I) + normalizePoli(PS, F ← I) if PS =/= empty .
+    
+    eq replace(l, F ← I) = l .
+    eq replace( (F1 ← I1) · PL, F ← I) = (if F1 == F then (F1 ← I) · PL else (F1 ← I1) · replace(PL, F ← I) fi) .
+    eq replace( (F1 ← I1), F ← I) = (if F1 == F then (F1 ← I) else (F1 ← I1) fi) .
+    
+    eq atom2assign((F = I) @ PD ) = (F ← I) · atom2assign(PD) .
+    eq atom2assign((F = I)) = (F ← I) .
+    eq assign2atom((F ← I) · PL) = (F = I) @ assign2atom(PL) .
+    eq assign2atom((F ← I)) = (F = I) .
+    eq assign2atom(PL1 + PL2) = atom2assign(PL1) + atom2assign(PL2) .
+    eq atom2assign(l) = l .
+    
+    op normalize : Policy FieldRangeSet -> NormalForm .
+    ceq normalize(F = I, FS) =
+        if PS =/= empty then 
+	  normalizePred((F = I) @ PS )
+	else
+	  normalizePred((F = I))
+	fi 
+      if PS := com(rm(FS,F)) .
+    
+    eq normalize(~ ( F = I), FS) = normalizePred((~(F = I)) @ com(FS)) .
+    eq normalize(F ← I, FS) = normalizePoli(com(FS),(F ← I)) .
+
+    eq normalize(PL1 + PL2, FS) = normalize(PL1, FS) + normalize(PL2, FS) .
+    
+    eq normalize(PD @ PD1, FS) = product(normalize(PD, FS),normalize(PD1, FS)) .
+    eq normalize(PL1 · PL2, FS) = product(normalize(PL1, FS),normalize(PL2, FS)) .
+    eq normalize((F ← I) · PL, FS) = product(normalize(F ← I, FS),normalize(PL, FS)) .
+
+    op uniform : NormalForm -> Bool .
+    ceq uniform((ATPD ; PL) + (ATPD ; PL1) + NF) = uniform((ATPD ; PL1) + NF) if isAtom(ATPD) .
+    ceq uniform((ATPD ; PL)) = true if isAtom(ATPD)  .
+    eq uniform(o) = true .
+    eq uniform(NF) = false [owise] .
+    ceq normalize((PL) *, FS) = normalizePred(com(FS)) + NF if NF := normalize(PL,FS) /\ uniform(NF) .
+
+    ceq normalize((PL) *, FS) = product(NF2, normalizePred(com(FS)) + NF3) 
+      if NF := normalize(PL,FS) /\
+	  not uniform(NF) /\
+	  (ATPD ; PL1) + NF1 := NF /\
+	  isAtom(ATPD) /\
+	  NF2 := normalize(nf2pol(NF1) *, FS) /\
+	  NF3 := product((ATPD ; PL1), NF2) .
+      
+      ***(
+
+    ceq normalize((PL) *, FS) =
+	product(normalize(nf2pol(NF1) *, FS), normalizePred(com(FS)) + product((ATPD; PL), normalize(nf2pol(NF1) *, FS))) 
+      if NF := normalize(PL,FS) /\
+	  not uniform(NF) /\
+	  (ATPD ; PL1) + NF1 := NF .
+
+    
+red normalize((nf2pol(((dst = 0) @ (sw = 2),(dst ← 0) · (sw ← 2)))) *, (dst,2) (sw,2)) .
+red product(((dst = 0) @ (sw = 1), (dst ← 0) · (sw ← 1)), 
+    ((dst = 0) @ (sw = 0),(dst ← 0) · (sw ← 0)) + 
+    ((dst = 0) @ (sw = 1),(dst ← 0) · (sw ← 1)) + 
+    ((dst = 0) @ (sw = 2),(dst ← 0) · (sw ← 2)) + 
+    ((dst = 1) @ (sw = 0),(dst ← 1) · (sw ← 0)) + 
+    ((dst = 1) @ (sw = 1),(dst ← 1) · (sw ← 1)) + 
+    ((dst = 1) @ (sw = 2),(dst ← 1) · (sw ← 2)) + 
+    ((dst = 2) @ (sw = 0),(dst ← 2) · (sw ← 0)) + 
+    ((dst = 2) @ (sw = 1),(dst ← 2) · (sw ← 1)) + 
+    ((dst = 2) @ (sw = 2),(dst ← 2) · (sw ← 2))) .
+    
+    )
+    
+    ops product productAux : NormalForm NormalForm -> NormalForm .
+    vars NF NF1 NF2 NF3 NF4 : NormalForm .
+    vars ATPD ATPD1 : Predicate .
+    vars CA CA1 : CAsign .
+    var NFI : NormalFormItem .
+    
+    ceq product((NFI + NF2), NF3) = productAux(NFI, NF3) + product(NF2, NF3) if NFI =/= o .
+    eq product(o, NF3) = o .
+    
+    ceq productAux((ATPD ; PL), ((ATPD1 ; PL1) + NF3)) =
+      if assign2atom(PL) == ATPD1 then (ATPD ; PL1) + productAux((ATPD ; PL), NF3)
+	else productAux((ATPD ; PL), NF3) fi
+      if isAtom(ATPD) /\ isAssig(PL) .
+    
+    ceq productAux((ATPD ; PL), ((ATPD1 ; PL1) + NF3)) = productAux((ATPD ; PL), NF3)
+      if isAtom(ATPD) /\ not isAssig(PL) .
+    eq productAux((ATPD ; PL), o) = o .
+    eq productAux(o,NF1) = o .
+    eq productAux((ATPD ; PL), (ATPD1 ; PL1)) = if (assign2atom(PL) == ATPD1) then (ATPD ; PL1) 
+	else o fi [owise] .
+    
+    --- additional axiom 
+    ceq (F = I) @ (~ (F = I')) = (F = I) if I =/= I' .
+    
+endm
+
+    
+
+
+***( TEST CODE
+
+red normalize(im, (sw,2) (pt,2) (dst,2)) .
+red normalize(s, (sw,2) (pt,2) (dst,2)) .
+    
+red normalize((p · t)*, (sw,2) (pt,2) (dst,2)) .
+red normalize((p · t), (sw,2) (pt,2) (dst,2)) .
+    
+
+red normalize(((dst = 0) · ((pt ← 1) · ((sw = 1) · (pt = 1) · (sw ← 0)))) *, (dst,2) (sw,2) (pt,2)) .
+    
+red normalize((sw = 0), (sw,2)) .
+red im .
+
+We can prove that s1 = im1 and s2 = im2 by the following commands:
+    
+red normalize(im1, (sw,2) (pt,2) (dst,2)) == normalize(s1, (sw,2) (pt,2) (dst,2)) .
+red normalize(im2, (sw,2) (pt,2) (dst,2)) == normalize(s2, (sw,2) (pt,2) (dst,2)) .
+    
+)
+    
+
+
+
+*** ( TEST CODE
+
+red normalize((src ← 1), (src, 2) (typ, 2)) .
+red normalize((src = 1), (src, 2) (typ, 2)) .
+red normalize(~(src = 1), (src, 2) (typ, 2)) .    
+
+red normalize((src ← 1) + (typ = 1) + (dst = 2), (src, 2) (typ, 2) (dst, 3)) .
+red normalize((src ← 1) · (typ = 1)   ·  (dst ← 3), (src, 2) (typ, 2) (dst,3)) .
+    
+
+    
+--- to normalize src ← 1
+    
+)
+    
+fmod TEST is
+    including POLICY .
+    ops p pA pB pAC t : -> Policy .
+    ops SSH A B H1 H2 : -> Int .
+    
+    eq p = ((dst = H1) @ (pt ← 1)) + ((dst = H2) @ (pt ← 2)) .
+    eq pAC = ~(typ = SSH) @ p .
+    eq pA = ((sw = A) @ (~ (typ = SSH)) @ p) + ((sw = B) @ p) .
+    eq pB = ((sw = A) @ p) + ((sw = B) @ (~ (typ = SSH)) @ p) .
+    eq t = ((sw = A) @ (pt = 2) @ (sw ← B) @ (pt ← 1)) +
+        ((sw = B) @ (pt = 1) @ (sw ← A) @ (pt ← 2)) +
+	((sw = A) @ (pt = 1)) +
+	((sw = B) @ (pt = 2)) .
+endfm
+    
+mod OPERATIONAL-SEMANTICS is
+    including POLICY .
+    including SET{PACKET-VIEW}*(sort Set{PACKET-VIEW} to PackSet, sort NeSet{PACKET-VIEW} to NPackSet) .
+    sort Configuration .
+    op <_|_> : Policy PackSet -> Configuration .
+
+    var F : FieldId .
+    var N : Int .
+    vars P Q R : Policy .
+    vars PI PI' PI1 PI2 : PackSet .
+
+    op filt : PackSet FieldId Int -> PackSet .
+    
+    var K1 : Packet .
+    eq filt(empty, F, N) = empty .
+    eq filt((K1, PI), F, N) = (if K1(F) == N then (K1, filt(PI,F,N)) else filt(PI, F, N) fi) .
+
+    op update : PackSet FieldId Int -> PackSet .
+    eq update(empty,F,N) = empty .
+    eq update((K1, PI), F,N) = (K1(F,N), update(PI,F,N)) .
+
+    rl [drop] : < o | PI > => < l | empty > .
+
+    rl [identy] : < l | PI > => < l | PI > [nonexec] . *** this rule is useless
+    
+   *** to filt packets in PI by F = N, after this only those packets who have a field (F:N) left 
+
+    rl [filter] : < (F = N) · P | PI > => < P | filt(PI,F,N) > .
+    
+    crl [negation] : < ~ Q · P | PI > => < P | PI \ PI' > if  < Q | PI > => < l | PI' > .
+    
+    rl [modification] : < (F ← N) · P | PI > => < P | update(PI,F,N) >  .
+    
+    crl [COM] : < (P + Q) · R | PI > => < R | (PI1 , PI2) > if < P | PI > => < l | PI1 > /\ < Q | PI > => < l | PI2 > .
+
+      *** sequential composition, we do not need this rule because it has been implicitly formalized by other rules 
+    crl [seq-comp] : < P · Q | PI > => < l | PI2 > if < P | PI > => < l | PI1 > /\ < Q | PI1 > => < l | PI2 > [nonexec] .
+
+      *** this cause non-terminating
+    
+    rl [kleene-0] : < (P *) · Q | PI > => < Q | PI > .
+    rl [kleene-1] : < (P *) · Q | PI > => < P · Q | PI > .
+    rl [kleene-1] : < (P *) · Q | PI > => < P · (P *) · Q | PI > .
+    
+endm
+    
+load model-checker.maude
+    
+mod LTL-MODELCHECKING is
+    including OPERATIONAL-SEMANTICS .
+    including MODEL-CHECKER .
+
+    subsort Configuration < State .
+
+    op hasPS : Int -> Prop .
+    op allPS : Int -> Prop .
+    op hasPD : Int -> Prop .
+
+    vars SW SW1 PR PR1 DS : Int .
+    var P : Policy .
+    var PS : PackSet .
+    var PK : Packet .
+
+    *** state
+    *** p: policy
+    *** set of packet
+    
+    eq < P | PS > |= hasPS(SW) = checkHasPS(PS,SW) .
+    eq < P | PS > |= allPS(SW) = checkAllPS(PS,SW) .
+    eq < P | PS > |= hasPD(DS) = checkHasDS(PS,DS) .
+
+    *** 
+    op checkHasPS : PackSet  Int -> Bool .
+    eq checkHasPS((PK, PS), SW) = if PK(sw) == SW then true else checkHasPS(PS,SW) fi .
+    eq checkHasPS(empty, SW) = false .
+
+    
+    op checkHasDS : PackSet Int -> Bool .
+    eq checkHasDS((PK, PS), DS) = if PK(dst) == DS then true else checkHasDS(PS,DS) fi .
+    eq checkHasDS(empty, DS) = false .
+    *** eq checkHasDS(PS, DS) = false [owise] .
+    
+    op checkAllPS : PackSet Int -> Bool .
+    eq checkAllPS(((sw : SW) PK, PS), SW1) =
+      if SW == SW1 then checkAllPS(PS,SW1) else false fi .
+    eq checkAllPS(empty, SW1) = true .
+    eq checkAllPS(PS, SW) = false [owise] .
+    
+    eq C:Configuration |= PP:Prop = false [owise] .
+    
+endm
+
+mod TEST is
+---    including NORMAL-FORM .
+    including LTL-MODELCHECKING .
+    ops p t s1 s2 im1 im2 : -> Policy .
+    eq p = (dst = 0) · (pt ← 1) + (dst = 9) · (pt ← 2) .
+    eq t = (sw = 0) · (sw ← 1) · (pt ← 1) + (sw = 1) · (pt = 1) · (sw ← 0)   + 
+	(sw = 1) · (pt = 2) · (sw ← 2) · (pt ← 1) + (sw = 2) · (pt = 1) · (sw ← 1) · (pt ← 2) + 
+	(sw = 2) · (pt = 2) · (sw ← 3) · (pt ← 1) + (sw = 3) · (pt = 1) · (sw ← 2) · (pt ← 2) + 
+	(sw = 3) · (pt = 2) · (sw ← 4) · (pt ← 1) + (sw = 4) · (pt = 1) · (sw ← 3) · (pt ← 2) +
+	(sw = 5) · (pt = 1) · (sw ← 4) · (pt ← 2) + (sw = 4) · (pt = 2) · (sw ← 5) · (pt ← 1) +
+	(sw = 6) · (pt = 1) · (sw ← 5) · (pt ← 2) + (sw = 5) · (pt = 2) · (sw ← 6) · (pt ← 1) +
+	(sw = 7) · (pt = 1) · (sw ← 6) · (pt ← 2) + (sw = 6) · (pt = 2) · (sw ← 7) · (pt ← 1) +
+	(sw = 8) · (pt = 1) · (sw ← 7) · (pt ← 2) + (sw = 7) · (pt = 2) · (sw ← 8) · (pt ← 1) +
+	(sw = 9) · (sw ← 8) · (pt ← 2) + (sw = 8) · (pt = 2) · (sw ← 9)  .
+     ***(
+        +
+	(sw = 10) · (sw ← 4) · (pt ← 3) + (sw = 4) · (pt = 3) · (sw ← 10) +
+	(sw = 11) · (sw ← 6) · (pt ← 3) + (sw = 6) · (pt = 3) · (sw ← 11) +
+	(sw = 12) · (sw ← 7) · (pt ← 4) + (sw = 7) · (pt = 4) · (sw ← 12) +
+	(sw = 9) · (sw ← 7) · (pt ← 3) + (sw = 7) · (pt = 3) · (sw ← 9) 
+    .)
+    
+    eq s1 = ((sw = 0) · (dst = 2) · (sw ← 2) · (pt ← 2)) .
+    eq s2 = ((sw = 2) · (dst = 0) · (sw ← 0) · (pt ← 1)) .
+    eq im1 = ((sw = 0) · (dst = 9)) · ((p · t) *) · ((sw = 9) ·(pt = 2)) .
+    eq im2 = ((sw = 2) · (dst = 0)) · ((p · t) *) · ((sw = 0) ·(pt = 1)) .
+endm
+
+    
+eof
+
+search < im1 | (sw : 0) (pt : 2) (dst : 9) > =>* < P:Policy | (sw : 9) PK:Packet > .    
+
+red modelCheck(< im1 | (sw : 0) (pt : 2) (dst : 9) >, hasPD(9) -> <> hasPS(9)) .
+    
+
+--- old code
+    
+rew < im1 | (src : 0) (pt : 2) (dst : 2) > .
+search < im1 | (sw : 0) (pt : 2) (dst : 2) > =>* < P:Policy | (sw : 2) PK:Packet , PS:PackSet > .
+    
+rew < (src = 2)   | ((src : 1) (pt : 2) (dst : 3), (src : 2) (pt : 1) (dst : 3)) > .
+result Configuration: < l | (src : 2) (pt : 1) (dst : 3) >
+    
+rew < (src ← 3) | ((src : 1) (pt : 2) (dst : 3), (src : 2) (pt : 1) (dst : 3)) > .
+result Configuration: < l | (src : 3) (pt : 1) (dst : 3), (src : 3) (pt : 2) (dst : 3) >
+    
+rew < (src = 2) @ (src ← 3) | ((src : 1) (pt : 2) (dst : 3), (src : 2) (pt : 1) (dst : 3)) > .
+result Configuration: < l | (src : 3) (pt : 1) (dst : 3) >
+    
+rew < (src = 2) + (src ← 3)  | ((src : 1) (pt : 2) (dst : 3), (src : 2) (pt : 1) (dst : 3)) > .    
+result Configuration: < l | (src : 2) (pt : 1) (dst : 3), (src : 3) (pt : 1) (dst : 3),
+(src : 3) (pt : 2) (dst : 3) >
+
+rew < ~ (src = 2)  | ((src : 1) (pt : 2) (dst : 3), (src : 2) (pt : 1) (dst : 3)) > .
+result Configuration: < l | (src : 1) (pt : 2) (dst : 3) >
+    
+show module SET .
+    
+red (typ = SSH) @ (sw = A) @ (pt = 1) @ ((pAC @ t) * ) @ (sw = B) @ (pt = 2) .
+
+parse (typ = SSH) @ (sw = A) @ (pt = 1) @ ((pAC @ t) * ) @ (sw = B) @ (pt = 2) .
+    
+result: o .
+
+
+red (typ = SSH) @ (sw = A) @ (pt = 1) @ ((pA @ t) * ) @ (sw = B) @ (pt = 2) .
+
+red (typ = SSH) @ (sw = A) @ (pt = 1) @ ((pB @ t) * ) @ (sw = B) @ (pt = 2) .
